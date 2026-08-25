@@ -1,47 +1,55 @@
+import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
-import matplotlib.patches as mpatches
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
+import time
 
-# Parameters
-R = 1.0  # Circle radius
-omega1 = 1.0  # Angular speed of T1 vertices
-omega2 = 1.5  # Angular speed of T2 tangency points
-time_steps = 200
-time = np.linspace(0, 4*np.pi, time_steps)
+st.set_page_config(layout="wide")
+st.title("🌀 Geothesis — 3D Wave Function")
 
-# Set up figure
-fig = plt.figure(figsize=(12, 10))
-ax = fig.add_subplot(111, projection='3d')
-ax.set_box_aspect([1, 1, 1.5])
+# Sidebar controls
+st.sidebar.header("Controls")
+omega1 = st.sidebar.slider("ω₁ (T₁ vertices)", 0.1, 3.0, 1.0, 0.1)
+omega2 = st.sidebar.slider("ω₂ (T₂ tangents)", 0.1, 3.0, 1.5, 0.1)
+elevation = st.sidebar.slider("View elevation", 0, 90, 20, 5)
+azimuth_speed = st.sidebar.slider("Rotation speed", 0.0, 2.0, 0.5, 0.1)
+time_speed = st.sidebar.slider("Time speed", 0.01, 0.2, 0.05, 0.01)
+show_helices = st.sidebar.checkbox("Show helical paths", True)
+show_waveform = st.sidebar.checkbox("Show T₃ area waveform", True)
 
-# Colors
-T1_COLOR = '#00ff88'
-T2_COLOR = '#ff4444'
-TANGENT_COLOR = '#ffaa00'
-LINE_COLOR = '#aa44ff'
-T3_CROSS_COLOR = '#00ccff'
-T3_NO_CROSS_COLOR = '#ff00ff'
+# Constants
+R = 1.0
+TIME_LIMIT = 20
+
+# Initialize session state
+if 'time' not in st.session_state:
+    st.session_state.time = 0.0
+if 'playing' not in st.session_state:
+    st.session_state.playing = True
+if 'azimuth' not in st.session_state:
+    st.session_state.azimuth = 45
+
+# Play/Pause buttons
+col1, col2, col3 = st.columns([1, 1, 2])
+with col1:
+    if st.button("▶️ Play" if not st.session_state.playing else "⏸️ Pause"):
+        st.session_state.playing = not st.session_state.playing
+with col2:
+    if st.button("🔄 Reset"):
+        st.session_state.time = 0.0
+        st.session_state.azimuth = 45
 
 def get_t1_vertices(t, omega1, R):
-    """T1 inscribed triangle vertices (on circle)"""
     angles = np.array([0, 2*np.pi/3, 4*np.pi/3]) + omega1 * t
-    vertices = np.array([[R*np.cos(a), R*np.sin(a), 0] for a in angles])
-    return vertices
+    return np.array([[R*np.cos(a), R*np.sin(a), 0] for a in angles])
 
 def get_t2_vertices(t, omega2, R):
-    """T2 circumscribed triangle vertices (tangent lines intersections)"""
     angles = np.array([0, 2*np.pi/3, 4*np.pi/3]) + omega2 * t
-    
-    # Tangency points on circle
     tangency_points = np.array([[R*np.cos(a), R*np.sin(a), 0] for a in angles])
     
-    # Calculate T2 vertices (intersection of tangent lines)
     vertices = []
     for i in range(3):
         a1, a2 = angles[i], angles[(i+1) % 3]
-        # Tangent line at angle a: cos(a)*x + sin(a)*y = R
         A = np.array([[np.cos(a1), np.sin(a1)],
                       [np.cos(a2), np.sin(a2)]])
         b = np.array([R, R])
@@ -49,25 +57,20 @@ def get_t2_vertices(t, omega2, R):
             intersection = np.linalg.solve(A, b)
             vertices.append([intersection[0], intersection[1], 0])
         except:
-            # Parallel tangents (shouldn't happen)
             vertices.append([R*3*np.cos(a1), R*3*np.sin(a1), 0])
     
     return np.array(vertices), tangency_points
 
-def get_t3_from_connecting_lines(t1_vertices, t2_vertices, R):
-    """Calculate T3 from intersections of connecting lines"""
+def get_t3(t1_vertices, t2_vertices, R):
     connecting_lines = []
-    
     for i in range(3):
         start = t1_vertices[i]
         end = t2_vertices[i]
         direction = end - start
-        # Extend line
-        extended_start = start - direction * 10
-        extended_end = end + direction * 10
+        extended_start = start - direction * 20
+        extended_end = end + direction * 20
         connecting_lines.append([extended_start, extended_end])
     
-    # Find intersections
     t3_vertices = []
     for i in range(3):
         line1 = connecting_lines[i]
@@ -76,7 +79,6 @@ def get_t3_from_connecting_lines(t1_vertices, t2_vertices, R):
         p1, p2 = line1
         p3, p4 = line2
         
-        # 2D line intersection
         x1, y1 = p1[0], p1[1]
         x2, y2 = p2[0], p2[1]
         x3, y3 = p3[0], p3[1]
@@ -85,216 +87,189 @@ def get_t3_from_connecting_lines(t1_vertices, t2_vertices, R):
         denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
         
         if abs(denom) < 0.001:
-            return None, None  # Parallel lines, no T3
+            return None, None
         
-        t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
-        ix = x1 + t * (x2 - x1)
-        iy = y1 + t * (y2 - y1)
-        
+        t_val = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
+        ix = x1 + t_val * (x2 - x1)
+        iy = y1 + t_val * (y2 - y1)
         t3_vertices.append([ix, iy, 0])
     
     t3_vertices = np.array(t3_vertices)
     
-    # Check if T3 is valid (not degenerate)
+    # Check area
     area = np.abs(np.cross(t3_vertices[1] - t3_vertices[0], 
                            t3_vertices[2] - t3_vertices[0])) / 2
-    
     if area < 0.01:
         return None, None
     
-    # Check if T3 crosses circle
-    crosses_circle = False
+    # Check crossing
+    crosses = False
     for i in range(3):
         p1 = t3_vertices[i][:2]
         p2 = t3_vertices[(i+1) % 3][:2]
-        
-        # Check if segment intersects circle
         d = p2 - p1
         f = p1 - np.array([0, 0])
-        
         a = np.dot(d, d)
         b = 2 * np.dot(f, d)
         c = np.dot(f, f) - R**2
+        disc = b**2 - 4*a*c
         
-        discriminant = b**2 - 4*a*c
-        
-        if discriminant >= 0:
-            disc_sqrt = np.sqrt(discriminant)
-            t1_intersect = (-b - disc_sqrt) / (2*a)
-            t2_intersect = (-b + disc_sqrt) / (2*a)
-            
-            if (0 <= t1_intersect <= 1) or (0 <= t2_intersect <= 1):
-                crosses_circle = True
+        if disc >= 0:
+            disc_sqrt = np.sqrt(disc)
+            t1_int = (-b - disc_sqrt) / (2*a)
+            t2_int = (-b + disc_sqrt) / (2*a)
+            if (0 <= t1_int <= 1) or (0 <= t2_int <= 1):
+                crosses = True
                 break
     
-    return t3_vertices, crosses_circle
+    return t3_vertices, crosses
 
-def update(frame):
-    ax.clear()
-    t = time[frame]
-    
-    # Set limits and labels
-    limit = 3.5
-    ax.set_xlim([-limit, limit])
-    ax.set_ylim([-limit, limit])
-    ax.set_zlim([-limit, limit])
-    ax.set_xlabel('X')
-    ax.set_ylabel('Y')
-    ax.set_zlabel('Z (time)')
-    ax.set_title(f'Wave Function T₃ | t = {t:.2f} | ω₁={omega1:.1f}, ω₂={omega2:.1f}', 
-                 fontsize=12, pad=20)
-    
-    # Draw circle at z=0 (wireframe cylinder to show time evolution)
-    theta = np.linspace(0, 2*np.pi, 100)
-    circle_x = R * np.cos(theta)
-    circle_y = R * np.sin(theta)
-    circle_z = np.zeros_like(theta)
-    ax.plot(circle_x, circle_y, circle_z, 'b-', alpha=0.3, linewidth=1)
-    
-    # Draw time axis (Z-axis as time)
-    z_time = np.linspace(-limit, limit, 100)
-    ax.plot(np.zeros_like(z_time), np.zeros_like(z_time), z_time, 
-            'gray', alpha=0.3, linewidth=1, linestyle='--')
-    
-    # Draw circle at current time (horizontal cross-section)
-    ax.plot(circle_x, circle_y, np.ones_like(theta) * t, 
-            'b-', alpha=0.5, linewidth=1.5)
-    
-    # Get T1 and T2 vertices at current time
-    t1_vertices = get_t1_vertices(t, omega1, R)
-    t2_vertices, tangency_points = get_t2_vertices(t, omega2, R)
-    
-    # Extend vertices to show helical paths (past and future)
-    past_time = time[max(0, frame-30):frame]
-    future_time = time[frame:min(time_steps, frame+30)]
-    
-    # Draw helical paths for T1 vertices
+# Update time
+if st.session_state.playing:
+    st.session_state.time += time_speed
+    st.session_state.azimuth += azimuth_speed
+
+t = st.session_state.time
+
+# Create 3D plot
+fig = plt.figure(figsize=(12, 10))
+ax = fig.add_subplot(111, projection='3d')
+
+limit = 3.5
+ax.set_xlim([-limit, limit])
+ax.set_ylim([-limit, limit])
+ax.set_zlim([-limit, limit])
+ax.set_xlabel('X')
+ax.set_ylabel('Y')
+ax.set_zlabel('Z (time)')
+
+# Circle at z=0
+theta = np.linspace(0, 2*np.pi, 100)
+ax.plot(R*np.cos(theta), R*np.sin(theta), np.zeros_like(theta), 
+        'b-', alpha=0.3, linewidth=1)
+
+# Circle at current time
+ax.plot(R*np.cos(theta), R*np.sin(theta), np.ones_like(theta)*t, 
+        'b-', alpha=0.5, linewidth=1.5)
+
+# Helical paths
+if show_helices:
+    t_range = np.linspace(max(0, t-5), t, 50)
     for i in range(3):
-        path_points = []
-        for t_path in time:
+        path = []
+        for t_path in t_range:
             v = get_t1_vertices(t_path, omega1, R)
-            path_points.append(v[i])
-        path_points = np.array(path_points)
-        ax.plot(path_points[:, 0], path_points[:, 1], path_points[:, 2] + t_path, 
-                T1_COLOR, alpha=0.2, linewidth=0.8)
-    
-    # Draw helical paths for T2 vertices
-    for i in range(3):
-        path_points = []
-        for t_path in time:
+            path.append(v[i])
+        path = np.array(path)
+        ax.plot(path[:, 0], path[:, 1], t_range, 
+                '#00ff88', alpha=0.3, linewidth=1)
+        
+        path = []
+        for t_path in t_range:
             v, _ = get_t2_vertices(t_path, omega2, R)
-            path_points.append(v[i])
-        path_points = np.array(path_points)
-        ax.plot(path_points[:, 0], path_points[:, 1], path_points[:, 2] + t_path, 
-                T2_COLOR, alpha=0.2, linewidth=0.8, linestyle='--')
+            path.append(v[i])
+        path = np.array(path)
+        ax.plot(path[:, 0], path[:, 1], t_range, 
+                '#ff4444', alpha=0.3, linewidth=1, linestyle='--')
+
+# Get current vertices
+t1_vertices = get_t1_vertices(t, omega1, R)
+t2_vertices, tangency_points = get_t2_vertices(t, omega2, R)
+
+# Draw T1
+t1_current = t1_vertices.copy()
+t1_current[:, 2] = t
+for i in range(3):
+    ax.plot([t1_current[i, 0], t1_current[(i+1)%3, 0]], 
+            [t1_current[i, 1], t1_current[(i+1)%3, 1]], 
+            [t1_current[i, 2], t1_current[(i+1)%3, 2]], 
+            '#00ff88', linewidth=2)
+ax.scatter(t1_current[:, 0], t1_current[:, 1], t1_current[:, 2], 
+           c='#00ff88', s=50)
+
+# Draw T2
+t2_current = t2_vertices.copy()
+t2_current[:, 2] = t
+for i in range(3):
+    ax.plot([t2_current[i, 0], t2_current[(i+1)%3, 0]], 
+            [t2_current[i, 1], t2_current[(i+1)%3, 1]], 
+            [t2_current[i, 2], t2_current[(i+1)%3, 2]], 
+            '#ff4444', linewidth=2, linestyle='--')
+ax.scatter(t2_current[:, 0], t2_current[:, 1], t2_current[:, 2], 
+           c='#ff4444', s=50)
+
+# Draw tangency points
+tangency_current = tangency_points.copy()
+tangency_current[:, 2] = t
+ax.scatter(tangency_current[:, 0], tangency_current[:, 1], tangency_current[:, 2], 
+           c='#ffaa00', s=30)
+
+# Draw T3
+t3_vertices, t3_crosses = get_t3(t1_vertices, t2_vertices, R)
+
+if t3_vertices is not None:
+    t3_current = t3_vertices.copy()
+    t3_current[:, 2] = t
     
-    # Draw T1 triangle at current time (at z=t)
-    t1_current = t1_vertices.copy()
-    t1_current[:, 2] = t
+    # Connecting lines
     for i in range(3):
-        ax.plot([t1_current[i, 0], t1_current[(i+1)%3, 0]], 
-                [t1_current[i, 1], t1_current[(i+1)%3, 1]], 
-                [t1_current[i, 2], t1_current[(i+1)%3, 2]], 
-                T1_COLOR, linewidth=2)
-    ax.scatter(t1_current[:, 0], t1_current[:, 1], t1_current[:, 2], 
-               c=T1_COLOR, s=50, label='T₁ vertices')
+        start = t1_vertices[i]
+        end = t2_vertices[i]
+        direction = end - start
+        ext_start = start - direction * 20
+        ext_end = end + direction * 20
+        ax.plot([ext_start[0], ext_end[0]], 
+                [ext_start[1], ext_end[1]], 
+                [t, t], 
+                '#aa44ff', alpha=0.5, linewidth=0.8, linestyle=':')
     
-    # Draw T2 triangle at current time (at z=t)
-    t2_current = t2_vertices.copy()
-    t2_current[:, 2] = t
+    # T3 triangle
+    t3_color = '#00ccff' if t3_crosses else '#ff00ff'
     for i in range(3):
-        ax.plot([t2_current[i, 0], t2_current[(i+1)%3, 0]], 
-                [t2_current[i, 1], t2_current[(i+1)%3, 1]], 
-                [t2_current[i, 2], t2_current[(i+1)%3, 2]], 
-                T2_COLOR, linewidth=2, linestyle='--')
-    ax.scatter(t2_current[:, 0], t2_current[:, 1], t2_current[:, 2], 
-               c=T2_COLOR, s=50, label='T₂ vertices')
+        ax.plot([t3_current[i, 0], t3_current[(i+1)%3, 0]], 
+                [t3_current[i, 1], t3_current[(i+1)%3, 1]], 
+                [t3_current[i, 2], t3_current[(i+1)%3, 2]], 
+                t3_color, linewidth=3)
+    ax.scatter(t3_current[:, 0], t3_current[:, 1], t3_current[:, 2], 
+               c=t3_color, s=80)
     
-    # Draw tangency points
-    tangency_current = tangency_points.copy()
-    tangency_current[:, 2] = t
-    ax.scatter(tangency_current[:, 0], tangency_current[:, 1], tangency_current[:, 2], 
-               c=TANGENT_COLOR, s=30, label='Tangency')
-    
-    # Draw connecting lines and T3
-    t3_vertices, t3_crosses = get_t3_from_connecting_lines(t1_vertices, t2_vertices, R)
-    
-    if t3_vertices is not None:
-        t3_current = t3_vertices.copy()
-        t3_current[:, 2] = t
-        
-        # Draw connecting lines (infinite)
-        for i in range(3):
-            start = t1_vertices[i]
-            end = t2_vertices[i]
-            direction = end - start
-            extended_start = start - direction * 20
-            extended_end = end + direction * 20
-            extended_start[2] = t
-            extended_end[2] = t
-            
-            ax.plot([extended_start[0], extended_end[0]], 
-                    [extended_start[1], extended_end[1]], 
-                    [extended_start[2], extended_end[2]], 
-                    LINE_COLOR, alpha=0.5, linewidth=0.8, linestyle=':')
-        
-        # Draw T3
-        t3_color = T3_CROSS_COLOR if t3_crosses else T3_NO_CROSS_COLOR
-        for i in range(3):
-            ax.plot([t3_current[i, 0], t3_current[(i+1)%3, 0]], 
-                    [t3_current[i, 1], t3_current[(i+1)%3, 1]], 
-                    [t3_current[i, 2], t3_current[(i+1)%3, 2]], 
-                    t3_color, linewidth=3)
-        ax.scatter(t3_current[:, 0], t3_current[:, 1], t3_current[:, 2], 
-                   c=t3_color, s=80, label='T₃')
-        
-        # Update title with T3 status
-        status = "CROSSES" if t3_crosses else "NO CROSS"
-        ax.set_title(f'T₃ ALIVE ({status}) | t = {t:.2f} | ω₁={omega1:.1f}, ω₂={omega2:.1f}', 
-                     fontsize=12, pad=20)
-    else:
-        ax.set_title(f'T₃ NOT ALIVE | t = {t:.2f} | ω₁={omega1:.1f}, ω₂={omega2:.1f}', 
-                     fontsize=12, pad=20)
-    
-    # Draw waveform surface (T3 area over time as translucent surface)
-    # Collect T3 existence over time window
-    window = 40
-    start_idx = max(0, frame - window)
-    end_idx = min(time_steps, frame + 1)
-    
-    t3_areas = []
-    t3_times = []
-    
-    for idx in range(start_idx, end_idx):
-        t_window = time[idx]
-        t1_v = get_t1_vertices(t_window, omega1, R)
-        t2_v, _ = get_t2_vertices(t_window, omega2, R)
-        t3_v, crosses = get_t3_from_connecting_lines(t1_v, t2_v, R)
-        
+    status = "CROSSES circle" if t3_crosses else "NO cross"
+    st.sidebar.success(f"T₃ ALIVE — {status}")
+else:
+    st.sidebar.error("T₃ not alive")
+
+# Waveform
+if show_waveform:
+    t_range = np.linspace(max(0, t-5), t, 30)
+    areas = []
+    times = []
+    for t_path in t_range:
+        t1_v = get_t1_vertices(t_path, omega1, R)
+        t2_v, _ = get_t2_vertices(t_path, omega2, R)
+        t3_v, _ = get_t3(t1_v, t2_v, R)
         if t3_v is not None:
             area = np.abs(np.cross(t3_v[1] - t3_v[0], t3_v[2] - t3_v[0])) / 2
-            t3_areas.append(area)
-            t3_times.append(t_window)
+            areas.append(area)
+            times.append(t_path)
     
-    # Draw area waveform
-    if len(t3_areas) > 1:
-        ax.plot(np.zeros_like(t3_areas), np.zeros_like(t3_areas), t3_times, 
-                'w-', alpha=0.3, linewidth=0.5)
-        ax.plot(t3_areas, np.zeros_like(t3_areas), t3_times, 
-                '#00ffaa', alpha=0.7, linewidth=2, label='T₃ area')
-    
-    # Legend
-    ax.legend(loc='upper left', fontsize=8)
-    
-    # Set view angle (rotate around Y axis)
-    ax.view_init(elev=20, azim=45 + frame * 0.5)
+    if len(areas) > 1:
+        ax.plot(areas, np.zeros_like(areas), times, 
+                '#00ffaa', alpha=0.8, linewidth=2)
 
-# Create animation
-anim = FuncAnimation(fig, update, frames=time_steps, interval=50, blit=False)
+ax.set_title(f'Geothesis 3D | t={t:.2f} | ω₁={omega1:.1f}, ω₂={omega2:.1f}', 
+             fontsize=14)
 
-# Save animation
-anim.save('geothesis_3d_wave.gif', writer='pillow', fps=20)
+ax.view_init(elev=elevation, azim=st.session_state.azimuth)
 
-plt.show()
+st.pyplot(fig)
 
-print("Animation saved as 'geothesis_3d_wave.gif'")
+# Metrics
+col1, col2, col3 = st.columns(3)
+col1.metric("Time", f"{t:.2f}")
+col2.metric("Speed ratio", f"{omega2/omega1:.2f}")
+col3.metric("T₃ status", "Alive" if t3_vertices is not None else "Dead")
+
+# Auto-refresh
+if st.session_state.playing:
+    time.sleep(0.05)
+    st.rerun()
