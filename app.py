@@ -96,9 +96,11 @@ def get_t3(t1_vertices, t2_vertices, R):
     
     t3_vertices = np.array(t3_vertices)
     
-    # Check area
-    area = np.abs(np.cross(t3_vertices[1] - t3_vertices[0], 
-                           t3_vertices[2] - t3_vertices[0])) / 2
+    # Check area using 2D cross product (scalar)
+    v1 = t3_vertices[1][:2] - t3_vertices[0][:2]
+    v2 = t3_vertices[2][:2] - t3_vertices[0][:2]
+    area = abs(v1[0] * v2[1] - v1[1] * v2[0]) / 2
+    
     if area < 0.01:
         return None, None
     
@@ -108,7 +110,7 @@ def get_t3(t1_vertices, t2_vertices, R):
         p1 = t3_vertices[i][:2]
         p2 = t3_vertices[(i+1) % 3][:2]
         d = p2 - p1
-        f = p1 - np.array([0, 0])
+        f = p1 - np.array([0.0, 0.0])
         a = np.dot(d, d)
         b = 2 * np.dot(f, d)
         c = np.dot(f, f) - R**2
@@ -248,7 +250,9 @@ if show_waveform:
         t2_v, _ = get_t2_vertices(t_path, omega2, R)
         t3_v, _ = get_t3(t1_v, t2_v, R)
         if t3_v is not None:
-            area = np.abs(np.cross(t3_v[1] - t3_v[0], t3_v[2] - t3_v[0])) / 2
+            v1 = t3_v[1][:2] - t3_v[0][:2]
+            v2 = t3_v[2][:2] - t3_v[0][:2]
+            area = abs(v1[0] * v2[1] - v1[1] * v2[0]) / 2
             areas.append(area)
             times.append(t_path)
     
